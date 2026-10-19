@@ -20,24 +20,42 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Check Android SDK
+      - name: Extract Android project
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          test -d "$ANDROID_HOME" || exit 1
+          mkdir -p extracted
+          unzip -q sms-vault-permission-check.zip -d extracted
+          echo "ZIP contents:"
+          find extracted -maxdepth 4 -type f
+
+      - name: Locate Gradle project
+        run: |
+          PROJECT=$(find extracted -type f \
+            \( -name settings.gradle -o -name settings.gradle.kts \) \
+            -print -quit)
+
+          if [ -z "$PROJECT" ]; then
+            echo "::error::Android Gradle project not found in ZIP"
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PROJECT")
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project found: $PROJECT_DIR"
 
       - name: Build Debug APK
         run: |
+          cd "$PROJECT_DIR"
           if [ -f gradlew ]; then
             chmod +x gradlew
-            ./gradlew assembleDebug --stacktrace
+            ./gradlew assembleDebug --no-daemon
           else
-            gradle assembleDebug --stacktrace
+            gradle assembleDebug --no-daemon
           fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: SMS-Vault-Backup-APK
-          path: app/build/outputs/apk/debug/*.apk
+          path: extracted/**/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           
