@@ -4,14 +4,15 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout project
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Java 17
@@ -20,42 +21,109 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
       - name: Extract Android project
         run: |
           mkdir -p extracted
-          unzip -q sms-vault-permission-check.zip -d extracted
-          echo "ZIP contents:"
-          find extracted -maxdepth 4 -type f
+
+          unzip -q \
+            sms-vault-permission-check.zip \
+            -d extracted
+
+          echo "Extracted project files:"
+          find extracted -maxdepth 5 -type f
 
       - name: Locate Gradle project
+        shell: bash
         run: |
           PROJECT=$(find extracted -type f \
-            \( -name settings.gradle -o -name settings.gradle.kts \) \
+            \( -name settings.gradle \
+            -o -name settings.gradle.kts \) \
             -print -quit)
 
           if [ -z "$PROJECT" ]; then
-            echo "::error::Android Gradle project not found in ZIP"
+            echo "::error::Gradle project not found"
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PROJECT")
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project found: $PROJECT_DIR"
+
+          echo "Gradle project: $PROJECT_DIR"
 
       - name: Build Debug APK
+        shell: bash
         run: |
           cd "$PROJECT_DIR"
+
           if [ -f gradlew ]; then
             chmod +x gradlew
-            ./gradlew assembleDebug --no-daemon
+            ./gradlew assembleDebug \
+              --no-daemon --stacktrace
           else
-            gradle assembleDebug --no-daemon
+            gradle assembleDebug \
+              --no-daemon --stacktrace
           fi
 
-      - name: Upload APK
+      - name: Locate APK
+        shell: bash
+        run: |
+          APK=$(find "$PROJECT_DIR" \
+            -path "*/build/outputs/apk/debug/*.apk" \
+            -type f -print -quit)
+
+          if [ -z "$APK" ]; then
+            echo "::error::Debug APK not found"
+            exit 1
+          fi
+
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+
+          echo "APK file:"
+          ls -lh "$APK"
+
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" \
+            -name apksigner -type f \
+            | sort -V | tail -1)
+
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner not found"
+            exit 1
+          fi
+
+          "$APKSIGNER" verify \
+            --verbose \
+            --print-certs \
+            "$APK_PATH"
+
+      - name: Inspect APK manifest
+        shell: bash
+        run: |
+          AAPT=$(find "$ANDROID_HOME/build-tools" \
+            -name aapt -type f \
+            | sort -V | tail -1)
+
+          if [ -z "$AAPT" ]; then
+            echo "::error::aapt not found"
+            exit 1
+          fi
+
+          "$AAPT" dump badging "$APK_PATH"
+
+      - name: Upload verified APK
         uses: actions/upload-artifact@v4
         with:
-          name: SMS-Vault-Backup-APK
-          path: extracted/**/build/outputs/apk/debug/*.apk
+          name: SMS-Vault-Verified-APK
+          path: ${{ env.APK_PATH }}
           if-no-files-found: error
+          retention-days: 7
           
