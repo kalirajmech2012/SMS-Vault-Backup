@@ -54,10 +54,10 @@ jobs:
               try:
                   with zipfile.ZipFile(path) as archive:
                       entries = archive.namelist()
-                      roots = [n.rsplit('/', 1)[0] for n in entries
-                               if n.endswith(('settings.gradle', 'settings.gradle.kts'))]
+                      roots = [str(pathlib.PurePosixPath(n).parent) for n in entries
+                               if pathlib.PurePosixPath(n).name in ('settings.gradle', 'settings.gradle.kts')]
                       for prefix in roots:
-                          prefix = prefix + '/' if prefix else ''
+                          prefix = '' if prefix == '.' else prefix + '/'
                           if any(prefix + f in entries for f in ('app/build.gradle', 'app/build.gradle.kts')):
                               chosen = (path, prefix)
                               break
